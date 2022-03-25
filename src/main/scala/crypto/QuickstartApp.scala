@@ -1,8 +1,10 @@
 package crypto
 
 import akka.actor
-import akka.actor.typed.{ActorSystem, SupervisorStrategy}
+import akka.actor.typed.{ActorRef, ActorSystem, SupervisorStrategy}
 import akka.actor.typed.scaladsl.{Behaviors, PoolRouter, Routers}
+import akka.cluster.sharding.typed.ShardingEnvelope
+import akka.cluster.sharding.typed.scaladsl.{ClusterSharding, Entity}
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.server.Route
 import akka.routing.RoundRobinPool
@@ -36,17 +38,15 @@ object QuickstartApp {
       implicit val ec = context.executionContext
       implicit val actorSystem = context.system.classicSystem
 
-      val cryptoActorPool: PoolRouter[CryptoActor.Command] = Routers.pool(poolSize = 4) {
-        // make sure the workers are restarted if they fail
-        Behaviors.supervise(CryptoActor(CoinGeckoPriceService())).onFailure[Exception](SupervisorStrategy.restart)
-      }
-      val router = context.spawn(cryptoActorPool, "worker-pool")
-      val routes = new CryptoRoutes(router)(context.system)
+      val sharding = ClusterSharding(context.system)
+      val shardingActor = sharding.init(Entity(CryptoActor.TypeKey)(createBehavior = entityContext => CryptoActor(CoinGeckoPriceService())))
+
+      val routes = new CryptoRoutes(shardingActor)(context.system)
       startHttpServer(routes.cryptoRoutes)(context.system)
 
       Behaviors.empty
     }
-    val system = ActorSystem[Nothing](rootBehavior, "HelloAkkaHttpServer")
+    val system = ActorSystem[Nothing](rootBehavior, "HttpServer")
     //#server-bootstrapping
   }
 }

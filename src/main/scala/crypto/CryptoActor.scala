@@ -2,6 +2,7 @@ package crypto
 
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior}
+import akka.cluster.sharding.typed.scaladsl.EntityTypeKey
 import crypto.service.{CryptoPrice, CryptoPriceService}
 import org.slf4j.Logger
 
@@ -9,6 +10,10 @@ import scala.concurrent.{ExecutionContext, ExecutionContextExecutor, Future}
 
 
 object CryptoActor {
+
+  val TypeKey: EntityTypeKey[Command] =
+    EntityTypeKey[Command]("CryptoActor")
+
   // actor protocol
   sealed trait Command
   final case class GetPrice(id: String, replyTo: ActorRef[PriceResponse]) extends Command
