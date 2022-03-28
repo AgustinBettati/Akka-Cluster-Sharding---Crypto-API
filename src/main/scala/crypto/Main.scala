@@ -16,7 +16,7 @@ import scala.util.Failure
 import scala.util.Success
 
 //#main-class
-object QuickstartApp {
+object Main {
   //#start-http-server
   private def startHttpServer(routes: Route)(implicit system: ActorSystem[_]): Unit = {
     // Akka HTTP still needs a classic ActorSystem to start
@@ -44,7 +44,7 @@ object QuickstartApp {
       implicit val actorSystem: actor.ActorSystem = context.system.classicSystem
 
       val sharding = ClusterSharding(context.system)
-      val shardingActor = sharding.init(Entity(CryptoActor.TypeKey)(createBehavior = _ => CryptoActor(CoinGeckoPriceService())))
+      val shardingActor = sharding.init(Entity(CryptoActor.TypeKey)(createBehavior = ctx => CryptoActor(ctx.entityId, CoinGeckoPriceService())))
 
       val routes = new CryptoRoutes(shardingActor)(context.system)
       startHttpServer(routes.cryptoRoutes)(context.system)

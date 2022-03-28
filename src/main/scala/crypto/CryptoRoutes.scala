@@ -33,7 +33,7 @@ class CryptoRoutes(cryptoShardedActor: ActorRef[ShardingEnvelope[CryptoActor.Com
     }
 
   def getPrice(id: String): Future[PriceResponse] = {
-    cryptoShardedActor.ask(replyTo => ShardingEnvelope(id,GetPrice(id, replyTo)))
+    cryptoShardedActor.ask(replyTo => ShardingEnvelope(id,GetPrice(replyTo)))
   }
   //#all-routes
   val cryptoRoutes: Route =
