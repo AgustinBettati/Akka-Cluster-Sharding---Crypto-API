@@ -1,0 +1,1 @@
+sbt "run -Dakka.http.server.default-http-port=8000 -Dakka.remote.artery.canonical.port=25520"
