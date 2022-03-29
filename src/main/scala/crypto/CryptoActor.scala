@@ -4,12 +4,14 @@ import akka.actor.typed.scaladsl.StashBuffer
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior}
 import akka.cluster.sharding.typed.scaladsl.EntityTypeKey
+import crypto.CryptoActor.{Command, FailedUpdate, FetchPrice, GetPrice, PriceResponse, SetPrice, fetchPrice}
 import crypto.service.{CryptoPrice, CryptoPriceService}
 import org.slf4j.Logger
 
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutor, Future}
 import scala.language.postfixOps
+import scala.util.{Failure, Success}
 
 
 object CryptoActor {
@@ -20,8 +22,10 @@ object CryptoActor {
   // actor protocol
   sealed trait Command
   final case class GetPrice(replyTo: ActorRef[PriceResponse]) extends Command
-  final case class SetPrice(price: CryptoPrice) extends Command
-  final case object FetchPrice extends Command
+  private final case class SetPrice(price: CryptoPrice) extends Command
+  private final case class FailedUpdate(e: Throwable) extends Command
+
+  private final case object FetchPrice extends Command // internal message triggered by timer
 
   final case class PriceResponse(price: CryptoPrice)
 
@@ -29,12 +33,22 @@ object CryptoActor {
     Behaviors.withTimers{ timers =>
       Behaviors.withStash(20) { buffer =>
         timers.startTimerAtFixedRate(FetchPrice, 0 seconds, 10 seconds)
-        running(coin, priceService, stash = buffer)
+        CryptoActor(coin, priceService, buffer).running(None)
       }
     }
   }
 
-  def running(coin: String, priceService: CryptoPriceService, stored: Option[CryptoPrice] = None, stash: StashBuffer[Command]): Behavior[Command] = Behaviors.receive { (context, msg) =>
+  def fetchPrice(priceService: CryptoPriceService, id: String, log: Logger)(implicit ex: ExecutionContext): Future[CryptoPrice] = {
+    val eventualPrice = priceService.fetchPrice(id)
+    eventualPrice.foreach( price => log.info(s"external request for price of $id returned ${price.currentPrice}"))
+    eventualPrice
+  }
+
+}
+
+case class CryptoActor private (coin: String, priceService: CryptoPriceService, stash: StashBuffer[Command]){
+
+  private def running(stored: Option[CryptoPrice] = None): Behavior[Command] = Behaviors.receive { (context, msg) =>
     implicit val ec: ExecutionContextExecutor = context.executionContext
     msg match {
       case GetPrice(replyTo) =>
@@ -44,27 +58,26 @@ object CryptoActor {
             context.log.info(s"returning cached value $coin")
             replyTo ! PriceResponse(cached)
           case None =>
-            context.log.info(s"stashed request")
+            context.log.info(s"stashed request as no value is present")
             stash.stash(msg)
         }
         Behaviors.same
       case FetchPrice =>
         context.log.info(s"Scheduled fetch price $coin")
-        fetchPrice(priceService, coin, context.log).foreach { price =>
-          context.self ! SetPrice(price)
+        context.pipeToSelf(fetchPrice(priceService, coin, context.log)){
+          case Success(price) => SetPrice(price)
+          case Failure(exception) => FailedUpdate(exception)
         }
-        running(coin, priceService, stored, stash)
+        running(stored)
       case SetPrice(updatedPrice) =>
         stash.unstashAll(
-          running(coin, priceService, Some(updatedPrice), stash)
+          running(Some(updatedPrice))
         )
+      case FailedUpdate(_) =>
+        // will not restart actor as I prefer to maintain the previous cached value.
+        context.log.info(s"failed to fetch new value for $coin")
+        Behaviors.same
     }
-  }
-
-  def fetchPrice(priceService: CryptoPriceService, id: String, log: Logger)(implicit ex: ExecutionContext): Future[CryptoPrice] = {
-    val eventualPrice = priceService.fetchPrice(id)
-    eventualPrice.foreach( price => log.info(s"external request for price of $id returned ${price.currentPrice}"))
-    eventualPrice
   }
 
 }
