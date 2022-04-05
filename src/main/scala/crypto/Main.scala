@@ -1,14 +1,16 @@
 package crypto
 
 import akka.actor
-import akka.actor.typed.{ActorRef, ActorSystem, SupervisorStrategy}
+import akka.actor.typed.{ActorRef, ActorSystem, Behavior, SupervisorStrategy}
 import akka.actor.typed.scaladsl.{Behaviors, PoolRouter, Routers}
 import akka.cluster.sharding.typed.ShardingEnvelope
 import akka.cluster.sharding.typed.scaladsl.{ClusterSharding, Entity}
 import akka.http.scaladsl.Http
-import akka.http.scaladsl.server.Route
+import akka.http.scaladsl.server.{Directives, Route}
 import akka.routing.RoundRobinPool
-import crypto.service.CoinGeckoPriceService
+import crypto.actor.{CryptoActor, UserActor}
+import crypto.route.{CryptoRoutes, UserRoutes}
+import crypto.service.{AggregatedWalletService, CoinGeckoPriceService, CryptoPriceService, EtherscanWalletService}
 import org.slf4j.LoggerFactory
 
 import scala.concurrent.ExecutionContextExecutor
@@ -43,11 +45,19 @@ object Main {
       implicit val ec: ExecutionContextExecutor = context.executionContext
       implicit val actorSystem: actor.ActorSystem = context.system.classicSystem
 
-      val sharding = ClusterSharding(context.system)
-      val shardingActor = sharding.init(Entity(CryptoActor.TypeKey)(createBehavior = ctx => CryptoActor(ctx.entityId, CoinGeckoPriceService())))
+      val walletService = AggregatedWalletService(List(EtherscanWalletService()))
+      val priceService: CryptoPriceService = CoinGeckoPriceService()
 
-      val routes = new CryptoRoutes(shardingActor)(context.system)
-      startHttpServer(routes.cryptoRoutes)(context.system)
+      val sharding = ClusterSharding(context.system)
+      val cryptoActor = sharding.init(Entity(CryptoActor.TypeKey)
+        (createBehavior = ctx => withResumeSupervisor(CryptoActor(ctx.entityId, priceService))))
+      val userActor = sharding.init(Entity(UserActor.TypeKey)
+        (createBehavior = ctx => withResumeSupervisor(UserActor(walletService))))
+
+      val cryptoRoutes = new CryptoRoutes(cryptoActor)(context.system)
+      val userRoutes = new UserRoutes(userActor)(context.system)
+
+      startHttpServer(Directives.concat(cryptoRoutes.cryptoRoutes, userRoutes.userRoutes))(context.system)
 
       Behaviors.empty
     }
@@ -64,5 +74,7 @@ object Main {
         System.setProperty(key, value)
     }
   }
+
+  private def withResumeSupervisor[T](b: Behavior[T]): Behavior[T] = Behaviors.supervise(b).onFailure[Throwable](SupervisorStrategy.resume)
 }
 //#main-class

@@ -1,10 +1,9 @@
-package crypto
+package crypto.actor
 
-import akka.actor.typed.scaladsl.StashBuffer
-import akka.actor.typed.scaladsl.Behaviors
+import akka.actor.typed.scaladsl.{Behaviors, StashBuffer}
 import akka.actor.typed.{ActorRef, Behavior}
 import akka.cluster.sharding.typed.scaladsl.EntityTypeKey
-import crypto.CryptoActor.{Command, FailedUpdate, FetchPrice, GetPrice, PriceResponse, SetPrice, fetchPrice}
+import crypto.actor.CryptoActor._
 import crypto.service.{CryptoPrice, CryptoPriceService}
 import org.slf4j.Logger
 
@@ -74,7 +73,7 @@ case class CryptoActor private (coin: String, priceService: CryptoPriceService, 
           running(Some(updatedPrice))
         )
       case FailedUpdate(_) =>
-        // will not restart actor as I prefer to maintain the previous cached value.
+        // will not restart actor as it is preferred to maintain the previous cached value.
         context.log.info(s"failed to fetch new value for $coin")
         Behaviors.same
     }
